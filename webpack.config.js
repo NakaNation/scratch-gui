@@ -76,6 +76,17 @@ const baseConfig = new ScratchWebpackConfigBuilder(
                 context: 'node_modules/scratch-vm/dist/web',
                 from: 'extension-worker.{js,js.map}',
                 noErrorOnMissing: true
+            },
+            {
+                // scratch-storage ships as a pre-built bundle, so webpack cannot see
+                // that it loads its fetch worker from `chunks/fetch-worker.<hash>.js`
+                // and never emits it. Without the file the worker 404s and every
+                // asset load through it fails silently: "Choose a Sprite", "Choose a
+                // Backdrop", "Choose a Costume" and "Choose a Sound" all open, show
+                // their grids, close on a click and add nothing.
+                context: 'node_modules/scratch-storage/dist/web',
+                from: 'chunks/*.js',
+                noErrorOnMissing: true
             }
         ]
     }));
