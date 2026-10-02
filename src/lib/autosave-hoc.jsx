@@ -19,6 +19,22 @@ const SAVE_DEBOUNCE = 3000;
 // never let this long pass with unsaved changes.
 const SAVE_MAX_WAIT = 30000;
 
+// Which save this editor uses, read once from its address. A lesson page passes
+//   ?slot=<build>   one save per build: a build reopens its own work, and the
+//                   next build starts blank (no slot: the one shared save);
+//   &from=<build>   an earlier build's save to open while this one is empty
+//                   (Deep Dive: Level Up opens the student's Deep Dive);
+//   &start=<file>   a project shipped with the editor, opened when neither save
+//                   exists. Only files under static/starters/ are accepted.
+const STARTER = /^static\/starters\/[\w-]+\.sb3$/;
+const readSaveParams = () => {
+    const query = new URLSearchParams(window.location.search);
+    return {slot: query.get('slot'), from: query.get('from'), start: query.get('start')};
+};
+
+// A save that cannot be read (a private window, blocked site data) is no save.
+const readOrNothing = slot => readAutosave(slot).catch(() => null);
+
 /* Higher Order Component that keeps the current project in the browser and puts
  * it back on the next visit. This editor has no accounts and no project server,
  * so without it a reload is indistinguishable from starting over.
@@ -36,6 +52,7 @@ const AutosaveHOC = function (WrappedComponent) {
             this.timeout = null;
             this.oldestUnsavedChange = 0;
             this.saving = false;
+            this.params = readSaveParams();
             // The GUI loads an empty project of its own on startup. Restoring
             // before that finishes means it lands on top of our work, so
             // everything here waits for the first project to be on screen.
@@ -65,21 +82,37 @@ const AutosaveHOC = function (WrappedComponent) {
             // A link to a specific project is an explicit request for that
             // project, and beats whatever was last open in this browser.
             if (/#\d+/.test(window.location.hash)) return;
-            readAutosave()
+            const {slot, from, start} = this.params;
+            readOrNothing(slot)
+                .then(record => ((!record && from) ? readOrNothing(from) : record))
                 .then(record => {
-                    if (!record || !record.project) return null;
-                    return this.props.vm.loadProject(record.project).then(() => {
-                        if (record.title) this.props.onSetProjectTitle(record.title);
-                        this.props.onSetProjectUnchanged();
-                        log(`Restored the project saved at ${new Date(record.savedAt)}`);
-                    });
+                    if (record && record.project) {
+                        return this.open(record.project, record.title)
+                            .then(() => log(`Restored the project saved at ${new Date(record.savedAt)}`));
+                    }
+                    if (start && STARTER.test(start)) {
+                        return fetch(start)
+                            .then(response => {
+                                if (!response.ok) throw new Error(`${start} answered ${response.status}`);
+                                return response.arrayBuffer();
+                            })
+                            .then(project => this.open(project))
+                            .then(() => log(`Opened the starter ${start}`));
+                    }
+                    return null;
                 })
                 .catch(e => log.warn('Could not restore the saved project', e));
+        }
+        open (project, title) {
+            return this.props.vm.loadProject(project).then(() => {
+                if (title) this.props.onSetProjectTitle(title);
+                this.props.onSetProjectUnchanged();
+            });
         }
         forget () {
             clearTimeout(this.timeout);
             this.oldestUnsavedChange = 0;
-            clearAutosave().catch(e => log.warn('Could not clear the saved project', e));
+            clearAutosave(this.params.slot).catch(e => log.warn('Could not clear the saved project', e));
         }
         handleProjectChanged () {
             // Loading a project counts as changing it, so the restore above
@@ -108,7 +141,7 @@ const AutosaveHOC = function (WrappedComponent) {
                     project,
                     title: this.props.projectTitle,
                     savedAt: Date.now()
-                }))
+                }, this.params.slot))
                 .catch(e => log.warn('Could not save the project', e))
                 .then(() => {
                     this.saving = false;

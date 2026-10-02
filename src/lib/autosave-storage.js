@@ -42,22 +42,30 @@ const withStore = (mode, run) => openDb().then(db => new Promise((resolve, rejec
     };
 }));
 
+// A lesson page opens the editor once per build with ?slot=<build>, and each
+// slot keeps a record of its own, so one build's work never opens in the next.
+// No slot means the single record every visit shared before slots existed.
+const keyFor = slot => (slot ? `slot:${slot}` : KEY);
+
 /**
+ * @param {?string} slot which build's record; none for the shared one.
  * @returns {Promise<object|undefined>} the saved record, or undefined if there is none.
  *   A record is {project: ArrayBuffer, title: string, savedAt: number}.
  */
-const readAutosave = () => withStore('readonly', store => store.get(KEY));
+const readAutosave = slot => withStore('readonly', store => store.get(keyFor(slot)));
 
 /**
  * @param {object} record the project to keep. Replaces whatever was there.
+ * @param {?string} slot which build's record; none for the shared one.
  * @returns {Promise} resolves once the write has committed.
  */
-const writeAutosave = record => withStore('readwrite', store => store.put(record, KEY));
+const writeAutosave = (record, slot) => withStore('readwrite', store => store.put(record, keyFor(slot)));
 
 /**
+ * @param {?string} slot which build's record; none for the shared one.
  * @returns {Promise} resolves once the saved project is gone.
  */
-const clearAutosave = () => withStore('readwrite', store => store.delete(KEY));
+const clearAutosave = slot => withStore('readwrite', store => store.delete(keyFor(slot)));
 
 export {
     readAutosave,
